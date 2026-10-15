@@ -46,8 +46,6 @@ class RootModel(BaseModel, Generic[RootModelRootType], metaclass=_RootModelMetac
     """
 
     __pydantic_root_model__ = True
-    __pydantic_private__ = None
-    __pydantic_extra__ = None
 
     root: RootModelRootType
 
@@ -58,6 +56,14 @@ class RootModel(BaseModel, Generic[RootModelRootType], metaclass=_RootModelMetac
                 "`RootModel` does not support setting `model_config['extra']`", code='root-model-extra'
             )
         super().__init_subclass__(**kwargs)
+
+    def __new__(cls, /, root: RootModelRootType = PydanticUndefined, **data) -> Self:  # type: ignore
+        # Create instance and initialize slots immediately (issue #13998)
+        # This ensures slots are initialized even when __init__ is bypassed
+        instance = super().__new__(cls)
+        object.__setattr__(instance, '__pydantic_private__', None)
+        object.__setattr__(instance, '__pydantic_extra__', None)
+        return instance
 
     def __init__(self, /, root: RootModelRootType = PydanticUndefined, **data) -> None:  # type: ignore
         __tracebackhide__ = True
@@ -85,7 +91,11 @@ class RootModel(BaseModel, Generic[RootModelRootType], metaclass=_RootModelMetac
         Raises:
             NotImplemented: If the model is not a subclass of `RootModel`.
         """
-        return super().model_construct(root=root, _fields_set=_fields_set)
+        m = super().model_construct(root=root, _fields_set=_fields_set)
+        # Initialize slots for models created via model_construct (issue #13998)
+        object.__setattr__(m, '__pydantic_private__', None)
+        object.__setattr__(m, '__pydantic_extra__', None)
+        return m
 
     def __getstate__(self) -> dict[Any, Any]:
         return {
@@ -94,6 +104,9 @@ class RootModel(BaseModel, Generic[RootModelRootType], metaclass=_RootModelMetac
         }
 
     def __setstate__(self, state: dict[Any, Any]) -> None:
+        # Initialize slots first (issue #13998)
+        _object_setattr(self, '__pydantic_private__', None)
+        _object_setattr(self, '__pydantic_extra__', None)
         _object_setattr(self, '__pydantic_fields_set__', state['__pydantic_fields_set__'])
         _object_setattr(self, '__dict__', state['__dict__'])
 
@@ -101,26 +114,36 @@ class RootModel(BaseModel, Generic[RootModelRootType], metaclass=_RootModelMetac
         """Returns a shallow copy of the model."""
         cls = type(self)
         m = cls.__new__(cls)
+        # Initialize slots (issue #13998)
+        _object_setattr(m, '__pydantic_private__', None)
+        _object_setattr(m, '__pydantic_extra__', None)
         new_dict = copy(self.__dict__)
         new_dict['root'] = copy(self.__dict__['root'])  # pyright: ignore[reportIndexIssue] (https://github.com/microsoft/pyright/issues/11548)
-        # Private attributes live in `__dict__` on root models, so give the copy its own:
-        private = new_dict.get('__pydantic_private__')
-        if private is not None:
-            new_dict['__pydantic_private__'] = {  # pyright: ignore[reportIndexIssue] (https://github.com/microsoft/pyright/issues/11548)
-                k: v for k, v in private.items() if v is not PydanticUndefined
-            }
         _object_setattr(m, '__dict__', new_dict)
         _object_setattr(m, '__pydantic_fields_set__', copy(self.__pydantic_fields_set__))
+        # Copy private attributes from slot (issue #13998)
+        private = object.__getattribute__(self, '__pydantic_private__')
+        if private is not None:
+            _object_setattr(m, '__pydantic_private__', {
+                k: v for k, v in private.items() if v is not PydanticUndefined
+            })
         return m
 
     def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
         """Returns a deep copy of the model."""
         cls = type(self)
         m = cls.__new__(cls)
+        # Initialize slots (issue #13998)
+        _object_setattr(m, '__pydantic_private__', None)
+        _object_setattr(m, '__pydantic_extra__', None)
         _object_setattr(m, '__dict__', deepcopy(self.__dict__, memo=memo))
         # This next line doesn't need a deepcopy because __pydantic_fields_set__ is a set[str],
         # and attempting a deepcopy would be marginally slower.
         _object_setattr(m, '__pydantic_fields_set__', copy(self.__pydantic_fields_set__))
+        # Deep copy private attributes from slot (issue #13998)
+        private = object.__getattribute__(self, '__pydantic_private__')
+        if private is not None:
+            _object_setattr(m, '__pydantic_private__', deepcopy(private, memo=memo))
         return m
 
     if TYPE_CHECKING:
